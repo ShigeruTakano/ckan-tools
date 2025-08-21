@@ -16,22 +16,46 @@ import argparse
 WAIT_FOR_DATASTORE_TIMEOUT = 120
 # データストアの状態を確認する間隔（秒）
 POLLING_INTERVAL = 5
+# DataPusherへの再送信を試みる最大回数
+DATAPUSHER_MAX_RETRIES = 2
 # ----------------
 
-def wait_for_datastore_active(session, resource_id, headers, ckan_url):
+def wait_for_datastore_active(session, resource_id, headers, ckan_url, max_retries=1):
     """
     リソースのDataPusherタスクが完了し、データストアがアクティブになるまで待機する。
+    タイムアウトした場合は、指定された回数だけ再送信を試みる。
     """
     print("Waiting for DataPusher task to complete for resource: {}".format(resource_id))
-    start_time = time.time()
     
-    while True:
-        if time.time() - start_time > WAIT_FOR_DATASTORE_TIMEOUT:
-            print("Timeout reached. DataPusher task did not complete after {} seconds.".format(WAIT_FOR_DATASTORE_TIMEOUT))
-            return False
+    # 最初のチェックの前に一定時間待機
+    print("Initial wait for DataPusher to start... ({} seconds)".format(POLLING_INTERVAL))
+    time.sleep(POLLING_INTERVAL)
 
+    retries = 0
+    start_time = time.time()
+
+    while True:
+        # --- タイムアウトチェック ---
+        if time.time() - start_time > WAIT_FOR_DATASTORE_TIMEOUT:
+            print("Timeout reached after {} seconds.".format(WAIT_FOR_DATASTORE_TIMEOUT))
+            
+            if retries < max_retries:
+                retries += 1
+                print("Attempting to resubmit... (Attempt {} of {})".format(retries, max_retries))
+                if resubmit_to_datapusher(session, resource_id, headers, ckan_url):
+                    # 再送信が成功したら、タイマーをリセットして再度待機
+                    start_time = time.time()
+                    print("Resubmitted. Waiting again...")
+                    continue
+                else:
+                    print("Failed to resubmit. Aborting.")
+                    return False
+            else:
+                print("Maximum retries reached. DataPusher task did not complete.")
+                return False
+
+        # --- ステータスチェック ---
         try:
-            # task_status_show APIを呼び出す
             url = "{}/api/3/action/task_status_show".format(ckan_url)
             data = json.dumps({
                 "entity_id": resource_id,
@@ -40,7 +64,6 @@ def wait_for_datastore_active(session, resource_id, headers, ckan_url):
             })
             response = session.post(url, headers=headers, data=data)
 
-            # タスクが存在しない場合(404)は、インポートが不要か既に完了している可能性がある
             if response.status_code == 404:
                 print("No pending DataPusher task found. Assuming it is complete.")
                 return True
@@ -153,7 +176,7 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
 
             # --- データストアの完了待機 ---
             if resource_id:
-                wait_for_datastore_active(session, resource_id, headers, ckan_url)
+                wait_for_datastore_active(session, resource_id, headers, ckan_url, max_retries=DATAPUSHER_MAX_RETRIES)
 
         except requests.exceptions.RequestException as e:
             print("An error occurred during the request: {}".format(e))
