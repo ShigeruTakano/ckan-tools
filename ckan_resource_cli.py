@@ -122,17 +122,18 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
         print("Error: File not found at '{}'".format(file_path))
         sys.exit(1)
 
-    headers = {
+    # DataPusherのステータス確認など、JSONをPOSTする際に使用
+    json_headers = {
         "Authorization": api_key,
         "Content-Type": "application/json"
     }
     
-    # requestsはファイルアップロード時にContent-Typeを自動設定するため、ここでは削除
-    upload_headers = { "Authorization": api_key }
+    # ファイルアップロード時はrequestsがContent-Typeを自動設定するためAuthorizationのみ
+    file_upload_headers = { "Authorization": api_key }
 
     with requests.Session() as session:
         print("Searching for resource '{}' in package '{}'...".format(resource_name, package_id))
-        existing_resource = get_resource_by_name(session, package_id, resource_name, upload_headers, ckan_url)
+        existing_resource = get_resource_by_name(session, package_id, resource_name, file_upload_headers, ckan_url)
         
         resource_id = None
         
@@ -140,18 +141,15 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
             # --- 既存リソースの処理 ---
             if existing_resource:
                 resource_id = existing_resource["id"]
-                print("Found existing resource with ID: {}. Checking status...".format(resource_id))
-
-                
+                print("Found existing resource with ID: {}. Updating...".format(resource_id))
                 
                 # --- リソースを更新 ---
-                print("Updating resource...")
                 with open(file_path, 'rb') as f:
                     files = {'upload': f}
                     update_url = "{}/api/3/action/resource_update".format(ckan_url)
                     update_data = {"id": resource_id}
                     
-                    response = session.post(update_url, headers=upload_headers, files=files, data=update_data)
+                    response = session.post(update_url, headers=file_upload_headers, files=files, data=update_data)
                     response.raise_for_status()
                     print("Resource updated successfully.")
 
@@ -168,7 +166,7 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
                         "format": "CSV"
                     }
                     
-                    response = session.post(create_url, headers=upload_headers, files=files, data=create_data)
+                    response = session.post(create_url, headers=file_upload_headers, files=files, data=create_data)
                     response.raise_for_status()
                     result = response.json().get("result", {})
                     resource_id = result["id"]
@@ -176,7 +174,81 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
 
             # --- データストアの完了待機 ---
             if resource_id:
-                wait_for_datastore_active(session, resource_id, headers, ckan_url, max_retries=DATAPUSHER_MAX_RETRIES)
+                wait_for_datastore_active(session, resource_id, json_headers, ckan_url, max_retries=DATAPUSHER_MAX_RETRIES)
+
+        except requests.exceptions.RequestException as e:
+            print("An error occurred during the request: {}".format(e))
+            if e.response:
+                try:
+                    print("Server response: {}".format(e.response.json()))
+                except ValueError:
+                    print("Server response: {}".format(e.response.text))
+            sys.exit(1)
+        except (IOError, OSError) as e:
+            print("File error: {}".format(e))
+            sys.exit(1)
+
+
+def resubmit_to_datapusher(session, resource_id, headers, ckan_url):
+    """
+    指定されたリソースをDataPusherに再送信する。
+    """
+    print("Attempting to resubmit resource {} to DataPusher...".format(resource_id))
+    try:
+        url = "{}/api/3/action/datapusher_submit".format(ckan_url)
+        data = json.dumps({"resource_id": resource_id})
+        
+        # datapusher_submitはContent-Type: application/json が必要
+        response = session.post(url, headers=headers, data=data)
+        response.raise_for_status()
+        
+        print("Successfully submitted to DataPusher.")
+        return True
+    except requests.exceptions.RequestException as e:
+        print("Error submitting to DataPusher: {}".format(e))
+        if e.response:
+            try:
+                print("Server response: {}".format(e.response.json()))
+            except ValueError:
+                print("Server response: {}".format(e.response.text))
+        return False
+
+
+def delete_resource(api_key, package_id, resource_name, ckan_url):
+    """
+    指定されたリソースを名前で検索し、削除する。
+    """
+    headers = {
+        "Authorization": api_key,
+        "Content-Type": "application/json"
+    }
+
+    with requests.Session() as session:
+        print("Searching for resource '{}' in package '{}' to delete...".format(resource_name, package_id))
+        resource_to_delete = get_resource_by_name(session, package_id, resource_name, headers, ckan_url)
+
+        if not resource_to_delete:
+            print("Resource '{}' not found in package '{}'. Nothing to delete.".format(resource_name, package_id))
+            return
+
+        resource_id = resource_to_delete["id"]
+        print("Found resource with ID: {}. Deleting...".format(resource_id))
+
+        try:
+            url = "{}/api/3/action/resource_delete".format(ckan_url)
+            data = {"id": resource_id}
+            response = session.post(url, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            print("Resource '{}' (ID: {}) deleted successfully.".format(resource_name, resource_id))
+
+        except requests.exceptions.RequestException as e:
+            print("An error occurred while deleting the resource: {}".format(e))
+            if e.response:
+                try:
+                    print("Server response: {}".format(e.response.json()))
+                except ValueError:
+                    print("Server response: {}".format(e.response.text))
+            sys.exit(1)
 
         except requests.exceptions.RequestException as e:
             print("An error occurred during the request: {}".format(e))
