@@ -38,12 +38,21 @@ def wait_for_datastore_active(session, resource_id, headers, ckan_url):
             
             resource_data = response.json().get("result", {})
             
-            if resource_data.get("datastore_active"):
+            datastore_active = resource_data.get("datastore_active")
+            state = resource_data.get("state")
+
+            print("Current resource status - datastore_active: {}, state: {}".format(datastore_active, state))
+            #print("Full resource data: {}".format(json.dumps(resource_data, indent=2)))
+
+            if datastore_active:
                 print("DataStore is now active.")
                 return True
             
-            if resource_data.get("state") == "error":
+            if state == "error":
                 print("DataStore import failed. Please check the resource on CKAN.")
+                # エラーの詳細情報を表示
+                if "datastore_error" in resource_data:
+                    print("Error details: {}".format(resource_data["datastore_error"]))
                 return False
 
         except requests.exceptions.RequestException as e:
@@ -244,5 +253,4 @@ if __name__ == "__main__":
     elif args.operation == "delete":
         delete_resource(args.api_key, args.package_id, args.resource_name, args.ckan_url)
 
-    print("
-Script finished.")
+    print("Script finished.")
