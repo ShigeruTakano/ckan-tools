@@ -20,45 +20,61 @@ POLLING_INTERVAL = 5
 
 def wait_for_datastore_active(session, resource_id, headers, ckan_url):
     """
-    リソースがデータストアでアクティブになるまで待機する。
+    リソースのDataPusherタスクが完了し、データストアがアクティブになるまで待機する。
     """
-    print("Waiting for DataStore to become active for resource: {}".format(resource_id))
+    print("Waiting for DataPusher task to complete for resource: {}".format(resource_id))
     start_time = time.time()
     
     while True:
         if time.time() - start_time > WAIT_FOR_DATASTORE_TIMEOUT:
-            print("Timeout reached. DataStore not active after {} seconds.".format(WAIT_FOR_DATASTORE_TIMEOUT))
+            print("Timeout reached. DataPusher task did not complete after {} seconds.".format(WAIT_FOR_DATASTORE_TIMEOUT))
             return False
 
         try:
-            url = "{}/api/3/action/resource_show".format(ckan_url)
-            params = {"id": resource_id}
-            response = session.get(url, headers=headers, params=params)
+            # task_status_show APIを呼び出す
+            url = "{}/api/3/action/task_status_show".format(ckan_url)
+            data = json.dumps({
+                "entity_id": resource_id,
+                "task_type": "datapusher",
+                "key": "datapusher"
+            })
+            response = session.post(url, headers=headers, data=data)
+
+            # タスクが存在しない場合(404)は、インポートが不要か既に完了している可能性がある
+            if response.status_code == 404:
+                print("No pending DataPusher task found. Checking resource_show directly...")
+                resource_url = "{}/api/3/action/resource_show".format(ckan_url)
+                resource_params = {"id": resource_id}
+                resource_response = session.get(resource_url, headers=headers, params=resource_params)
+                resource_response.raise_for_status()
+                resource_data = resource_response.json().get("result", {})
+                if resource_data.get("datastore_active"):
+                    print("DataStore is active.")
+                    return True
+                else:
+                    print("DataStore is not active, and no task is pending.")
+                    return False
+
             response.raise_for_status()
+            task_data = response.json().get("result", {})
             
-            resource_data = response.json().get("result", {})
-            
-            datastore_active = resource_data.get("datastore_active")
-            state = resource_data.get("state")
+            task_state = task_data.get("state")
+            print("Current DataPusher task status: {}".format(task_state))
 
-            print("Current resource status - datastore_active: {}, state: {}".format(datastore_active, state))
-            #print("Full resource data: {}".format(json.dumps(resource_data, indent=2)))
-
-            if datastore_active:
-                print("DataStore is now active.")
+            if task_state == "success":
+                print("DataPusher task succeeded. DataStore should be active now.")
                 return True
             
-            if state == "error":
-                print("DataStore import failed. Please check the resource on CKAN.")
-                # エラーの詳細情報を表示
-                if "datastore_error" in resource_data:
-                    print("Error details: {}".format(resource_data["datastore_error"]))
+            if task_state in ["failure", "error"]:
+                print("DataPusher task failed.")
+                if "error" in task_data:
+                    print("Error details: {}".format(task_data["error"]))
                 return False
 
         except requests.exceptions.RequestException as e:
-            print("Error checking resource status: {}".format(e))
+            print("Error checking task status: {}".format(e))
         
-        print("DataStore not active yet. Waiting {} seconds...".format(POLLING_INTERVAL))
+        print("Task not finished yet. Waiting {} seconds...".format(POLLING_INTERVAL))
         time.sleep(POLLING_INTERVAL)
 
 def get_resource_by_name(session, package_id, resource_name, headers, ckan_url):
@@ -113,32 +129,10 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
                 resource_id = existing_resource["id"]
                 print("Found existing resource with ID: {}. Checking status...".format(resource_id))
 
-                # データストアがアクティブでない場合、復旧を試みる
+                # データストアがアクティブでない場合、DataPusherへの再送信を試みる
                 if not existing_resource.get("datastore_active"):
-                    print("Warning: Resource datastore is not active. Attempting to reset it...")
-                    try:
-                        reset_url = "{}/api/3/action/datastore_delete".format(ckan_url)
-                        reset_data = json.dumps({"resource_id": resource_id, "force": True})
-                        
-                        # datastore_deleteはContent-Type: application/json が必要
-                        response = session.post(reset_url, headers=headers, data=reset_data)
-                        
-                        # 404はテーブルが存在しない場合なので許容
-                        if response.status_code == 404:
-                            print("Datastore table did not exist, which is fine.")
-                        else:
-                            response.raise_for_status()
-
-                        print("Datastore table for resource {} has been reset.".format(resource_id))
-
-                    except requests.exceptions.RequestException as e:
-                        print("Error resetting datastore: {}".format(e))
-                        if e.response:
-                            try:
-                                print("Server response: {}".format(e.response.json()))
-                            except ValueError:
-                                print("Server response: {}".format(e.response.text))
-                        print("Proceeding with update anyway...")
+                    print("Warning: Resource datastore is not active.")
+                    resubmit_to_datapusher(session, resource_id, headers, ckan_url)
                 
                 # --- リソースを更新 ---
                 print("Updating resource...")
@@ -172,7 +166,7 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
 
             # --- データストアの完了待機 ---
             if resource_id:
-                wait_for_datastore_active(session, resource_id, upload_headers, ckan_url)
+                wait_for_datastore_active(session, resource_id, headers, ckan_url)
 
         except requests.exceptions.RequestException as e:
             print("An error occurred during the request: {}".format(e))
@@ -185,6 +179,30 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
         except (IOError, OSError) as e:
             print("File error: {}".format(e))
             sys.exit(1)
+
+def resubmit_to_datapusher(session, resource_id, headers, ckan_url):
+    """
+    指定されたリソースをDataPusherに再送信する。
+    """
+    print("Attempting to resubmit resource {} to DataPusher...".format(resource_id))
+    try:
+        url = "{}/api/3/action/datapusher_submit".format(ckan_url)
+        data = json.dumps({"resource_id": resource_id})
+        
+        # datapusher_submitはContent-Type: application/json が必要
+        response = session.post(url, headers=headers, data=data)
+        response.raise_for_status()
+        
+        print("Successfully submitted to DataPusher.")
+        return True
+    except requests.exceptions.RequestException as e:
+        print("Error submitting to DataPusher: {}".format(e))
+        if e.response:
+            try:
+                print("Server response: {}".format(e.response.json()))
+            except ValueError:
+                print("Server response: {}".format(e.response.text))
+        return False
 
 def delete_resource(api_key, package_id, resource_name, ckan_url):
     """
@@ -226,7 +244,7 @@ def delete_resource(api_key, package_id, resource_name, ckan_url):
             sys.exit(1)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="A command-line tool to create, update, or delete CKAN resources.")
+    parser = argparse.ArgumentParser(description="CKANリソースを作成・更新・削除するためのコマンドラインツール。データストアへのアップロードが滞った際の自動復旧機能を備えています。")
     parser.add_argument("--ckan-url", required=True, help="The base URL of the CKAN instance (e.g., https://data.bodik.jp)")
     
     subparsers = parser.add_subparsers(dest="operation", help="Available operations")
