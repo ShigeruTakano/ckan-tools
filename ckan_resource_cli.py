@@ -42,18 +42,8 @@ def wait_for_datastore_active(session, resource_id, headers, ckan_url):
 
             # タスクが存在しない場合(404)は、インポートが不要か既に完了している可能性がある
             if response.status_code == 404:
-                print("No pending DataPusher task found. Checking resource_show directly...")
-                resource_url = "{}/api/3/action/resource_show".format(ckan_url)
-                resource_params = {"id": resource_id}
-                resource_response = session.get(resource_url, headers=headers, params=resource_params)
-                resource_response.raise_for_status()
-                resource_data = resource_response.json().get("result", {})
-                if resource_data.get("datastore_active"):
-                    print("DataStore is active.")
-                    return True
-                else:
-                    print("DataStore is not active, and no task is pending.")
-                    return False
+                print("No pending DataPusher task found. Assuming it is complete.")
+                return True
 
             response.raise_for_status()
             task_data = response.json().get("result", {})
@@ -61,7 +51,7 @@ def wait_for_datastore_active(session, resource_id, headers, ckan_url):
             task_state = task_data.get("state")
             print("Current DataPusher task status: {}".format(task_state))
 
-            if task_state == "success":
+            if task_state == "complete":
                 print("DataPusher task succeeded. DataStore should be active now.")
                 return True
             
@@ -129,10 +119,7 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
                 resource_id = existing_resource["id"]
                 print("Found existing resource with ID: {}. Checking status...".format(resource_id))
 
-                # データストアがアクティブでない場合、DataPusherへの再送信を試みる
-                if not existing_resource.get("datastore_active"):
-                    print("Warning: Resource datastore is not active.")
-                    resubmit_to_datapusher(session, resource_id, headers, ckan_url)
+                
                 
                 # --- リソースを更新 ---
                 print("Updating resource...")
