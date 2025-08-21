@@ -74,6 +74,69 @@ export CKAN_API_KEY="your-api-key-here"
 ./run_sample.sh
 ```
 
+## ライブラリとしての利用
+
+`ckan_resource_cli.py` は、他のPythonスクリプトから直接インポートして利用することも可能です。
+特に `create_or_update_resource` 関数は、外部プログラムからCKANリソースを自動で操作したい場合に便利です。
+
+### サンプルコード
+
+以下は、`create_or_update_resource` 関数を呼び出すサンプルコードです。
+
+```python
+import os
+from ckan_resource_cli import create_or_update_resource
+
+# --- 設定 ---
+# CKANインスタンスのURL
+CKAN_URL = "https://data.bodik.jp"  # ご自身の環境に合わせて変更してください
+
+# 環境変数からCKANのAPIキーを取得
+# 事前に export CKAN_API_KEY="your-api-key" を実行してください
+API_KEY = os.environ.get("CKAN_API_KEY")
+
+# 対象のパッケージIDとリソース名
+PACKAGE_ID = "your-package-id"      # ご自身の環境に合わせて変更してください
+RESOURCE_NAME = "sample-resource"   # ご自身の環境に合わせて変更してください
+DESCRIPTION = "このリソースはサンプルスクリプトから作成されました。"
+
+# アップロードするファイルの準備 (カレントディレクトリに作成)
+FILE_PATH = "sample_data.csv"
+with open(FILE_PATH, "w") as f:
+    f.write("col1,col2\n")
+    f.write("data1,data2\n")
+
+# --- 関数の実行 ---
+if not API_KEY:
+    print("エラー: 環境変数 CKAN_API_KEY が設定されていません。")
+else:
+    print(f"リソース '{RESOURCE_NAME}' を作成・更新します...")
+    create_or_update_resource(
+        api_key=API_KEY,
+        package_id=PACKAGE_ID,
+        resource_name=RESOURCE_NAME,
+        file_path=FILE_PATH,
+        ckan_url=CKAN_URL,
+        description=DESCRIPTION
+    )
+    print("処理が完了しました。")
+
+# --- 後片付け ---
+os.remove(FILE_PATH)
+```
+
+### 実行方法
+
+1. 上記のコードを `example.py` のようなファイル名で保存します。
+2. ターミナルで環境変数 `CKAN_API_KEY` を設定します。
+   ```bash
+   export CKAN_API_KEY="your-api-key-here"
+   ```
+3. スクリプトを実行します。
+   ```bash
+   python example.py
+   ```
+
 ## 注意事項
 
 - リソースのアップロード時、ファイル形式は`CSV`として登録されます。他の形式（Excelなど）を想定している場合は、スクリプト内の`"format": "CSV"`の部分を適宜修正してください。
