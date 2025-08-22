@@ -20,6 +20,7 @@ POLLING_INTERVAL = 5
 DATAPUSHER_MAX_RETRIES = 2
 # ----------------
 
+
 def wait_for_datastore_active(session, resource_id, headers, ckan_url, max_retries=1):
     """
     リソースのDataPusherタスクが完了し、データストアがアクティブになるまで待機する。
@@ -90,6 +91,7 @@ def wait_for_datastore_active(session, resource_id, headers, ckan_url, max_retri
         print("Task not finished yet. Waiting {} seconds...".format(POLLING_INTERVAL))
         time.sleep(POLLING_INTERVAL)
 
+
 def get_resource_by_name(session, package_id, resource_name, headers, ckan_url):
     """指定したデータセット内でリソース名が一致するものを検索"""
     url = "{}/api/3/action/package_show".format(ckan_url)
@@ -112,6 +114,7 @@ def get_resource_by_name(session, package_id, resource_name, headers, ckan_url):
     except ValueError:
         print("Error: Invalid JSON response from server.")
         sys.exit(1)
+
 
 def create_or_update_resource(api_key, package_id, resource_name, file_path, ckan_url, description='', resource_id=None):
     """
@@ -232,10 +235,15 @@ def resubmit_to_datapusher(session, resource_id, headers, ckan_url):
                 print("Server response: {}".format(e.response.text))
         return False
 
-def delete_resource(api_key, package_id, resource_name, ckan_url):
+
+def delete_resource(api_key, package_id, ckan_url, resource_name=None, resource_id=None):
     """
-    指定されたリソースを名前で検索し、削除する。
+    指定されたリソースを名前またはIDで削除する。
     """
+    if not resource_id and not resource_name:
+        print("Error: Either a resource name or a resource ID must be provided to delete a resource.")
+        sys.exit(1)
+
     headers = {
         "Authorization": api_key
     }
@@ -245,31 +253,45 @@ def delete_resource(api_key, package_id, resource_name, ckan_url):
     }
 
     with requests.Session() as session:
-        print("Searching for resource '{}' in package '{}' to delete...".format(resource_name, package_id))
-        resource_to_delete = get_resource_by_name(session, package_id, resource_name, headers, ckan_url)
+        # IDが指定されていない場合は、名前で検索してIDを取得
+        if not resource_id:
+            print("Searching for resource '{}' in package '{}' to delete...".format(resource_name, package_id))
+            resource_to_delete = get_resource_by_name(session, package_id, resource_name, headers, ckan_url)
 
-        if not resource_to_delete:
-            print("Resource '{}' not found in package '{}'. Nothing to delete.".format(resource_name, package_id))
-            return
-
-        resource_id = resource_to_delete["id"]
-        print("Found resource with ID: {}. Deleting...".format(resource_id))
+            if not resource_to_delete:
+                print("Resource '{}' not found in package '{}'. Nothing to delete.".format(resource_name, package_id))
+                return
+            
+            resource_id = resource_to_delete["id"]
+            print("Found resource with ID: {}. Deleting...".format(resource_id))
+        else:
+            # IDが指定されている場合は、そのIDを直接使用
+            print("Attempting to delete resource with ID: {}...".format(resource_id))
 
         try:
             url = "{}/api/3/action/resource_delete".format(ckan_url)
             data = {"id": resource_id}
             response = session.post(url, headers=json_headers, data=json.dumps(data))
             response.raise_for_status()
-            print("Resource '{}' (ID: {}) deleted successfully.".format(resource_name, resource_id))
+            
+            # 削除成功時のメッセージを修正
+            if resource_name:
+                print("Resource '{}' (ID: {}) deleted successfully.".format(resource_name, resource_id))
+            else:
+                print("Resource with ID: {} deleted successfully.".format(resource_id))
 
         except requests.exceptions.RequestException as e:
             print("An error occurred while deleting the resource: {}".format(e))
             if e.response:
+                # 404 Not Foundの場合、特にresource_idが指定された場合に有用な情報を出す
+                if e.response.status_code == 404:
+                     print("Error: Resource with ID '{}' not found.".format(resource_id))
                 try:
                     print("Server response: {}".format(e.response.json()))
                 except ValueError:
                     print("Server response: {}".format(e.response.text))
             sys.exit(1)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CKANリソースを作成・更新・削除するためのコマンドラインツール。データストアへのアップロードが滞った際の自動復旧機能を備えています。")
@@ -291,7 +313,9 @@ if __name__ == "__main__":
     parser_delete = subparsers.add_parser("delete", help="Delete a resource.")
     parser_delete.add_argument("api_key", help="CKAN API key")
     parser_delete.add_argument("package_id", help="ID or name of the target package")
-    parser_delete.add_argument("resource_name", help="Name of the resource to delete")
+    delete_group = parser_delete.add_mutually_exclusive_group(required=True)
+    delete_group.add_argument("--resource-name", help="Name of the resource to delete.")
+    delete_group.add_argument("--resource-id", help="ID of the resource to delete.")
 
     args = parser.parse_args()
 
@@ -309,6 +333,12 @@ if __name__ == "__main__":
             resource_id=args.resource_id
         )
     elif args.operation == "delete":
-        delete_resource(args.api_key, args.package_id, args.resource_name, args.ckan_url)
+        delete_resource(
+            api_key=args.api_key,
+            package_id=args.package_id,
+            ckan_url=args.ckan_url,
+            resource_name=args.resource_name,
+            resource_id=args.resource_id
+        )
 
     print("Script finished.")

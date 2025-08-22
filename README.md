@@ -8,8 +8,8 @@ CKAN (Comprehensive Knowledge Archive Network) のデータセットに対して
 
 ## 主な特徴
 
-- **作成と更新**: CSVファイルを指定して、リソースを新規作成または上書き更新します。
-- **削除**: パッケージIDとリソース名を指定して、特定のリソースを削除します。
+- **作成と更新**: リソース名またはIDを指定して、CSVファイルをアップロードし、リソースを新規作成または上書き更新します。
+- **削除**: リソース名またはIDを指定して、特定のリソースを削除します。
 - **高精度なデータストア同期**: リソースのアップロード後、CKANの非同期タスク（`task_status_show`）を直接監視することで、データストアへの取り込み完了を正確に待機します。これにより、処理が「保留」のままになる問題を解消します。
 - **安全な自動復旧機能**: 更新時にリソースが「保留中」などでスタックしている場合、DataPusherに処理を再実行させることで、安全な復旧を試みます。これにより、既存のデータを削除することなく、スタックした状態からの復帰が可能です。**リソースIDは維持されます。**
 - **柔軟な設定**: 接続先CKANのURLをコマンドラインオプションで指定できます。
@@ -58,17 +58,29 @@ python ckan_resource_cli.py --ckan-url <CKANのURL> upload <api_key> <package_id
 
 ### 2. リソースの削除 (`delete`)
 
-指定したリソースを削除します。
+リソース名またはリソースIDを使って、特定のリソースを削除します。
+
+- **リソース名** (`--resource-name`) を指定した場合:
+  - パッケージ内で一致する名前のリソースを検索して削除します。
+- **リソースID** (`--resource-id`) を指定した場合:
+  - IDが一致するリソースを直接削除します。
+
+どちらか一方の指定が必須です。
 
 ```bash
-python ckan_resource_cli.py --ckan-url <CKANのURL> delete <api_key> <package_id> <resource_name>
+# 名前で削除
+python ckan_resource_cli.py --ckan-url <CKANのURL> delete <api_key> <package_id> --resource-name <リソース名>
+
+# IDで削除
+python ckan_resource_cli.py --ckan-url <CKANのURL> delete <api_key> <package_id> --resource-id <リソースID>
 ```
 
 **引数:**
 - `--ckan-url`: (必須) 接続先のCKANのURL (例: `https://data.bodik.jp`)
 - `api_key`: CKANのAPIキー
 - `package_id`: 対象となるデータセット（パッケージ）のIDまたは名前
-- `resource_name`: 削除したいリソースの名前
+- `--resource-name`: (削除用) 削除したいリソースの名前。`--resource-id`がない場合は必須です。
+- `--resource-id`: (削除用) 削除したいリソースのID。`--resource-name`がない場合は必須です。
 
 ## 実行サンプル
 

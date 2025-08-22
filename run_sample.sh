@@ -51,22 +51,38 @@ python "$SCRIPT_PATH" \
     upload \
     "$API_KEY" \
     "$PACKAGE_ID" \
-    "$RESOURCE_NAME" \
     "$FILE_PATH" \
+    --resource-name "$RESOURCE_NAME" \
     --description "$DESCRIPTION"
 
 
 # --- delete（削除）を実行 ---
-# 削除を実行したい場合は、以下のブロックのコメントを解除し、
+# 削除を実行したい場合は、以下のいずれかのブロックのコメントを解除し、
 # 上のuploadブロックをコメントアウトしてください。
+
+# --- パターンA: 名前で削除 ---
 #
-# echo "操作: delete"
+# echo "操作: delete (by name)"
 # python "$SCRIPT_PATH" \
 #     --ckan-url "$CKAN_URL" \
 #     delete \
 #     "$API_KEY" \
 #     "$PACKAGE_ID" \
-#     "$RESOURCE_NAME"
+#     --resource-name "$RESOURCE_NAME"
+
+
+# --- パターンB: IDで削除 ---
+#
+# # 削除したいリソースのIDを設定してください
+# RESOURCE_ID_TO_DELETE="your-resource-id-to-delete"
+#
+# echo "操作: delete (by ID)"
+# python "$SCRIPT_PATH" \
+#     --ckan-url "$CKAN_URL" \
+#     delete \
+#     "$API_KEY" \
+#     "$PACKAGE_ID" \
+#     --resource-id "$RESOURCE_ID_TO_DELETE"
 
 echo "---------------------------------"
 echo "処理が完了しました。"
