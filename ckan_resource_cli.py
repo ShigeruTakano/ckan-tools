@@ -113,9 +113,10 @@ def get_resource_by_name(session, package_id, resource_name, headers, ckan_url):
         print("Error: Invalid JSON response from server.")
         sys.exit(1)
 
-def create_or_update_resource(api_key, package_id, resource_name, file_path, ckan_url, description=''):
+def create_or_update_resource(api_key, package_id, resource_name, file_path, ckan_url, description='', resource_id=None):
     """
     リソースが存在すれば更新し、存在しなければ新規作成する。
+    resource_idが指定された場合は、そのIDを持つリソースを直接更新する。
     スタックしたリソースの自動復旧を試みる。
     """
     if not os.path.exists(file_path):
@@ -132,21 +133,32 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
     file_upload_headers = { "Authorization": api_key }
 
     with requests.Session() as session:
-        print("Searching for resource '{}' in package '{}'...".format(resource_name, package_id))
-        existing_resource = get_resource_by_name(session, package_id, resource_name, file_upload_headers, ckan_url)
         
-        resource_id = None
+        update_mode = False
         
-        try:
-            # --- 既存リソースの処理 ---
+        # resource_idが指定されていれば、更新モードに設定
+        if resource_id:
+            print("A resource ID was provided. The script will attempt to update the resource with ID: {}.".format(resource_id))
+            update_mode = True
+        else:
+            # resource_idがなければ、名前で検索
+            print("Searching for resource '{}' in package '{}'...".format(resource_name, package_id))
+            existing_resource = get_resource_by_name(session, package_id, resource_name, file_upload_headers, ckan_url)
             if existing_resource:
                 resource_id = existing_resource["id"]
                 print("Found existing resource with ID: {}. Updating...".format(resource_id))
-                
-                # --- リソースを更新 ---
+                update_mode = True
+            else:
+                print("Resource not found by name. A new resource will be created.")
+
+        try:
+            # --- リソースの更新 ---
+            if update_mode:
+                print("Updating resource ID: {}".format(resource_id))
                 with open(file_path, 'rb') as f:
                     files = {'upload': f}
                     update_url = "{}/api/3/action/resource_update".format(ckan_url)
+                    # 更新時は、ファイルとIDのみを送信する
                     update_data = {"id": resource_id}
                     
                     response = session.post(update_url, headers=file_upload_headers, files=files, data=update_data)
@@ -155,7 +167,11 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
 
             # --- 新規リソースの作成 ---
             else:
-                print("Resource not found. Creating a new one...")
+                if not resource_name:
+                    print("Error: A resource name is required to create a new resource.")
+                    sys.exit(1)
+                
+                print("Creating a new resource named '{}'...".format(resource_name))
                 with open(file_path, 'rb') as f:
                     files = {'upload': f}
                     create_url = "{}/api/3/action/resource_create".format(ckan_url)
@@ -163,7 +179,7 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
                         "package_id": str(package_id),
                         "name": resource_name,
                         "description": description,
-                        "format": "CSV"
+                        "format": "CSV" # ファイル形式に応じて変更が必要な場合
                     }
                     
                     response = session.post(create_url, headers=file_upload_headers, files=files, data=create_data)
@@ -179,6 +195,9 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
         except requests.exceptions.RequestException as e:
             print("An error occurred during the request: {}".format(e))
             if e.response:
+                # 404 Not Foundの場合、特にresource_idが指定された場合に有用な情報を出す
+                if e.response.status_code == 404 and resource_id:
+                     print("Error: Resource with ID '{}' not found.".format(resource_id))
                 try:
                     print("Server response: {}".format(e.response.json()))
                 except ValueError:
@@ -263,8 +282,9 @@ if __name__ == "__main__":
     parser_upload = subparsers.add_parser("upload", help="Create or update a resource.")
     parser_upload.add_argument("api_key", help="CKAN API key")
     parser_upload.add_argument("package_id", help="ID or name of the target package")
-    parser_upload.add_argument("resource_name", help="Name of the resource to create or update")
     parser_upload.add_argument("file_path", help="Path to the data file (e.g., CSV)")
+    parser_upload.add_argument("--resource-name", help="Name of the resource. Required if --resource-id is not provided.")
+    parser_upload.add_argument("--resource-id", help="ID of the resource to update directly.")
     parser_upload.add_argument("--description", default="Data uploaded via script", help="Optional resource description")
 
     # Delete command
@@ -276,7 +296,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.operation == "upload":
-        create_or_update_resource(args.api_key, args.package_id, args.resource_name, args.file_path, args.ckan_url, description=args.description)
+        if not args.resource_id and not args.resource_name:
+            parser.error("Either --resource-id or --resource-name must be provided for the upload operation.")
+
+        create_or_update_resource(
+            api_key=args.api_key, 
+            package_id=args.package_id, 
+            resource_name=args.resource_name, 
+            file_path=args.file_path, 
+            ckan_url=args.ckan_url, 
+            description=args.description,
+            resource_id=args.resource_id
+        )
     elif args.operation == "delete":
         delete_resource(args.api_key, args.package_id, args.resource_name, args.ckan_url)
 

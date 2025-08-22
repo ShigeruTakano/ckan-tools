@@ -31,18 +31,29 @@ pip install requests
 
 ### 1. リソースの作成・更新 (`upload`)
 
-指定したリソース名が存在しない場合は新規作成、存在する場合はそのリソースをファイルで上書き更新します。
+リソース名またはリソースIDを使って、リソースを作成・更新します。
+- **リソース名** (`--resource-name`) を指定した場合:
+  - 存在すれば更新、存在しなければ新規作成します。
+- **リソースID** (`--resource-id`) を指定した場合:
+  - IDが一致するリソースを直接更新します。リソース名は無視されます。
+
+どちらか一方の指定が必須です。
 
 ```bash
-python ckan_resource_cli.py --ckan-url <CKANのURL> upload <api_key> <package_id> <resource_name> <file_path> [--description <説明>]
+# 名前で作成・更新
+python ckan_resource_cli.py --ckan-url <CKANのURL> upload <api_key> <package_id> <file_path> --resource-name <リソース名> [--description <説明>]
+
+# IDで更新
+python ckan_resource_cli.py --ckan-url <CKANのURL> upload <api_key> <package_id> <file_path> --resource-id <リソースID> [--description <説明>]
 ```
 
 **引数:**
 - `--ckan-url`: (必須) 接続先のCKANのURL (例: `https://data.bodik.jp`)
 - `api_key`: CKANのAPIキー
 - `package_id`: 対象となるデータセット（パッケージ）のIDまたは名前
-- `resource_name`: 作成または更新したいリソースの名前
 - `file_path`: アップロードするCSVファイルのパス
+- `--resource-name`: (作成・更新用) リソースの名前。`--resource-id`がない場合は必須です。
+- `--resource-id`: (更新用) リソースのID。これを指定すると、名前に関わらずIDで対象を特定します。
 - `--description`: (任意) リソースの説明。省略可能です。
 
 ### 2. リソースの削除 (`delete`)
@@ -82,6 +93,7 @@ export CKAN_API_KEY="your-api-key-here"
 ### サンプルコード
 
 以下は、`create_or_update_resource` 関数を呼び出すサンプルコードです。
+リソースID (`resource_id`) を指定すると、そのリソースを直接更新できます。
 
 ```python
 import os
@@ -95,12 +107,10 @@ CKAN_URL = "https://data.bodik.jp"  # ご自身の環境に合わせて変更し
 # 事前に export CKAN_API_KEY="your-api-key" を実行してください
 API_KEY = os.environ.get("CKAN_API_KEY")
 
-# 対象のパッケージIDとリソース名
+# 対象のパッケージID
 PACKAGE_ID = "your-package-id"      # ご自身の環境に合わせて変更してください
-RESOURCE_NAME = "sample-resource"   # ご自身の環境に合わせて変更してください
-DESCRIPTION = "このリソースはサンプルスクリプトから作成されました。"
 
-# アップロードするファイルの準備 (カレントディレクトリに作成)
+# --- アップロードするファイルの準備 (カレントディレクトリに作成) ---
 FILE_PATH = "sample_data.csv"
 with open(FILE_PATH, "w") as f:
     f.write("col1,col2\n")
@@ -110,16 +120,34 @@ with open(FILE_PATH, "w") as f:
 if not API_KEY:
     print("エラー: 環境変数 CKAN_API_KEY が設定されていません。")
 else:
-    print(f"リソース '{RESOURCE_NAME}' を作成・更新します...")
+    # --- パターン1: 名前でリソースを作成・更新 ---
+    print("--- Pattern 1: Create/Update by name ---")
     create_or_update_resource(
         api_key=API_KEY,
         package_id=PACKAGE_ID,
-        resource_name=RESOURCE_NAME,
+        resource_name="sample-resource-by-name", # 新規作成または更新対象の名前
         file_path=FILE_PATH,
         ckan_url=CKAN_URL,
-        description=DESCRIPTION
+        description="Created/Updated by name."
+    )
+    print("\n" + "="*30 + "\n")
+
+    # --- パターン2: IDでリソースを更新 ---
+    print("--- Pattern 2: Update by ID ---")
+    # resource_idを指定すると、そのIDを持つリソースが直接更新されます。
+    # この場合、resource_nameは指定しても無視されます。
+    RESOURCE_ID_TO_UPDATE = "your-resource-id-to-update" # 更新したいリソースのIDを指定
+    create_or_update_resource(
+        api_key=API_KEY,
+        package_id=PACKAGE_ID,
+        resource_id=RESOURCE_ID_TO_UPDATE,
+        file_path=FILE_PATH,
+        ckan_url=CKAN_URL,
+        description="Updated by ID.",
+        resource_name=None # ID指定時は不要
     )
     print("処理が完了しました。")
+
 
 # --- 後片付け ---
 os.remove(FILE_PATH)
