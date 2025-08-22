@@ -178,11 +178,29 @@ def create_or_update_resource(api_key, package_id, resource_name, file_path, cka
                 with open(file_path, 'rb') as f:
                     files = {'upload': f}
                     create_url = "{}/api/3/action/resource_create".format(ckan_url)
+                    # ファイル拡張子からフォーマットを自動判別
+                    _, ext = os.path.splitext(file_path)
+                    format_map = {
+                        '.json': 'JSON',
+                        '.xml': 'XML',
+                        '.xlsx': 'XLSX',
+                        '.xls': 'XLS',
+                        '.rdf': 'RDF',
+                        '.tsv': 'TSV',
+                        '.kml': 'KML',
+                        '.kmz': 'KMZ',
+                        '.shp': 'SHP',
+                        '.zip': 'ZIP'
+                    }
+                    # 拡張子を小文字にしてからマッピングを検索、見つからなければ'CSV'をデフォルトに
+                    file_format = format_map.get(ext.lower(), 'CSV')
+                    print("Determined format as '{}' from file extension.".format(file_format))
+
                     create_data = {
                         "package_id": str(package_id),
                         "name": resource_name,
                         "description": description,
-                        "format": "CSV" # ファイル形式に応じて変更が必要な場合
+                        "format": file_format
                     }
                     
                     response = session.post(create_url, headers=file_upload_headers, files=files, data=create_data)
